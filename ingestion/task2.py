@@ -1,108 +1,85 @@
-import os
 import pandas as pd
 import numpy as np
+import os
 
-# -------------------------
-# STEP 1: Load the input data
-# -------------------------
+# Input CSV
 input_csv = "/workspaces/air_quality_analysis_spark/output/combined_data_singlefile/part-00000-a877bdd4-7151-4ddb-98d5-bc94d55e4176-c000.csv"
-df = pd.read_csv(input_csv, parse_dates=["timestamp"])
 
-# -------------------------
-# STEP 2: Handle Outliers
-# -------------------------
-df = df[df["pm25"] < 1000]
-df["temperature"] = np.where(df["temperature"] > 60, np.nan, df["temperature"])
-df["humidity"] = np.where((df["humidity"] > 100) | (df["humidity"] < 0), np.nan, df["humidity"])
-
-# -------------------------
-# STEP 3: Impute Missing Values
-# -------------------------
-df["pm25"].fillna(df["pm25"].median(), inplace=True)
-df["temperature"].fillna(df["temperature"].median(), inplace=True)
-df["humidity"].fillna(df["humidity"].median(), inplace=True)
-
-# -------------------------
-# STEP 4: Feature Engineering
-# -------------------------
-df["date"] = df["timestamp"].dt.date
-df["hour"] = df["timestamp"].dt.hour
-
-# Z-score normalization
-for feature in ["pm25", "temperature", "humidity"]:
-    mean = df[feature].mean()
-    std = df[feature].std()
-    df[f"{feature}_zscore"] = (df[feature] - mean) / std
-
-# Rolling average, lag, rate-of-change
-df.sort_values(by=["region", "timestamp"], inplace=True)
-df["pm25_rolling_avg_3"] = df.groupby("region")["pm25"].transform(lambda x: x.rolling(3, min_periods=1).mean())
-df["pm25_lag_1"] = df.groupby("region")["pm25"].shift(1)
-df["pm25_rate_of_change"] = df["pm25"] - df["pm25_lag_1"]
-
-# -------------------------
-# STEP 5: Aggregations
-# -------------------------
-daily_avg = df.groupby(["date", "region"]).agg({
-    "pm25": "mean",
-    "temperature": "mean",
-    "humidity": "mean"
-}).reset_index()
-
-hourly_avg = df.groupby(["date", "hour", "region"]).agg({
-    "pm25": "mean",
-    "temperature": "mean",
-    "humidity": "mean"
-}).reset_index()
-
-pm25_trends = df[["timestamp", "region", "pm25", "pm25_rolling_avg_3", "pm25_lag_1", "pm25_rate_of_change"]].dropna()
-
-# -------------------------
-# STEP 6: Save outputs
-# -------------------------
+# Main output directory
 main_output_dir = "/workspaces/air_quality_analysis_spark/output_task2"
 os.makedirs(main_output_dir, exist_ok=True)
 
-output_datasets = {
-    "task2_enhanced_data": df,
-    "task2_daily_avg": daily_avg,
-    "task2_hourly_avg": hourly_avg,
-    "task2_pm25_trends": pm25_trends
-}
+# Read CSV
+df = pd.read_csv(input_csv, parse_dates=["timestamp"])
 
-def create_success_files(folder_path, dataset_name):
-    # Create empty SUCCESS file
-    open(os.path.join(folder_path, "_SUCCESS"), 'w').close()
-    # Create a dummy CRC file
-    crc_file = os.path.join(folder_path, f".{dataset_name}.csv.crc")
-    open(crc_file, 'w').close()
+# 1. Clean Data
+df_clean = df.copy()
+df_clean = df_clean[df_clean["pm25"] < 1000]
+df_clean["temperature"] = np.where(df_clean["temperature"] > 60, np.nan, df_clean["temperature"])
+df_clean["humidity"] = np.where((df_clean["humidity"] > 100) | (df_clean["humidity"] < 0), np.nan, df_clean["humidity"])
+df_clean["pm25"].fillna(df_clean["pm25"].median(), inplace=True)
+df_clean["temperature"].fillna(df_clean["temperature"].median(), inplace=True)
+df_clean["humidity"].fillna(df_clean["humidity"].median(), inplace=True)
 
-for dataset_name, dataset_df in output_datasets.items():
-    subfolder = os.path.join(main_output_dir, dataset_name)
-    os.makedirs(subfolder, exist_ok=True)
+# Round numeric values to 2 decimals
+df_clean = df_clean.round(2)
 
-    csv_path = os.path.join(subfolder, f"{dataset_name}.csv")
-    parquet_path = os.path.join(subfolder, f"{dataset_name}.parquet")
+# Save Cleaned Data
+clean_dir = os.path.join(main_output_dir, "cleaned_data")
+os.makedirs(clean_dir, exist_ok=True)
+df_clean.to_csv(os.path.join(clean_dir, "task2_cleaned_data.csv"), index=False)
+df_clean.to_parquet(os.path.join(clean_dir, "task2_cleaned_data.parquet"))
+open(os.path.join(clean_dir, "_SUCCESS"), "w").close()
 
-    # Special rounding ONLY for task2_enhanced_data
-    if dataset_name == "task2_enhanced_data":
-        dataset_df = dataset_df.round(2)
+# 2. Z-Score Normalization
+df_norm = df_clean.copy()
+for col in ["pm25", "temperature", "humidity"]:
+    mean = df_norm[col].mean()
+    std = df_norm[col].std()
+    df_norm[f"{col}_zscore"] = ((df_norm[col] - mean) / std).round(2)
 
-    # Reorder columns nicely for task2_enhanced_data
-    if dataset_name == "task2_enhanced_data":
-        columns_order = [
-            "timestamp", "region", "pm25", "temperature", "humidity", "date", "hour",
-            "pm25_zscore", "temperature_zscore", "humidity_zscore",
-            "pm25_rolling_avg_3", "pm25_lag_1", "pm25_rate_of_change"
-        ]
-        dataset_df = dataset_df[columns_order]
+# Save Enhanced Data
+enhanced_dir = os.path.join(main_output_dir, "enhanced_data")
+os.makedirs(enhanced_dir, exist_ok=True)
+df_norm.to_csv(os.path.join(enhanced_dir, "task2_enhanced_data.csv"), index=False)
+df_norm.to_parquet(os.path.join(enhanced_dir, "task2_enhanced_data.parquet"))
+open(os.path.join(enhanced_dir, "_SUCCESS"), "w").close()
 
-    # Write files
-    dataset_df.to_csv(csv_path, index=False)
-    dataset_df.to_parquet(parquet_path, engine="pyarrow")
+# 3. Daily Aggregations
+df_norm["date"] = df_norm["timestamp"].dt.date
+daily = df_norm.groupby(["date", "region"]).agg({
+    "pm25": "mean",
+    "temperature": "mean",
+    "humidity": "mean"
+}).reset_index().round(2)
 
-    # Create success indicators
-    create_success_files(subfolder, dataset_name)
+# Save Daily Aggregations
+daily_dir = os.path.join(main_output_dir, "daily_aggregations")
+os.makedirs(daily_dir, exist_ok=True)
+daily.to_csv(os.path.join(daily_dir, "task2_daily_aggregations.csv"), index=False)
+daily.to_parquet(os.path.join(daily_dir, "task2_daily_aggregations.parquet"))
+open(os.path.join(daily_dir, "_SUCCESS"), "w").close()
 
-print("\n🎯 Task 2 - COMPLETED Successfully!")
-print(f"All outputs saved inside ➡️ {main_output_dir}\n")
+# 4. Hourly Aggregations + Rolling/Lag/Rate Change
+df_norm["hour"] = df_norm["timestamp"].dt.hour
+hourly = df_norm.groupby(["date", "hour", "region"]).agg({
+    "pm25": "mean",
+    "temperature": "mean",
+    "humidity": "mean"
+}).reset_index().round(2)
+
+# Rolling, Lag and Rate of Change
+df_norm = df_norm.sort_values(["region", "timestamp"])
+df_norm["pm25_rolling_avg_3"] = df_norm.groupby("region")["pm25"].transform(lambda x: x.rolling(3, min_periods=1).mean()).round(2)
+df_norm["pm25_lag_1"] = df_norm.groupby("region")["pm25"].shift(1).round(2)
+df_norm["pm25_rate_of_change"] = (df_norm["pm25"] - df_norm["pm25_lag_1"]).round(2)
+
+# Save Hourly + Trends
+hourly_dir = os.path.join(main_output_dir, "hourly_trends")
+os.makedirs(hourly_dir, exist_ok=True)
+df_norm.to_csv(os.path.join(hourly_dir, "task2_hourly_trends.csv"), index=False)
+df_norm.to_parquet(os.path.join(hourly_dir, "task2_hourly_trends.parquet"))
+open(os.path.join(hourly_dir, "_SUCCESS"), "w").close()
+
+print("🎯 Task 2 - COMPLETED Successfully!")
+print(f"All outputs organized inside ➡️ {main_output_dir}")
