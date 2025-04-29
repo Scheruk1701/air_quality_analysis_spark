@@ -1,0 +1,5 @@
+timestamp,region,pm25,temperature,humidity
+,location,,32.65,69.57
+2025-04-20T22:30:00.000Z,New Delhi-8118,84.0,27.17,50.1
+2025-04-21T02:30:00.000Z,New Delhi-8118,99.0,25.59,30.88
+2025-04-21T06:30:00.000Z,New Delhi-8118,72.0,28.72,66.67

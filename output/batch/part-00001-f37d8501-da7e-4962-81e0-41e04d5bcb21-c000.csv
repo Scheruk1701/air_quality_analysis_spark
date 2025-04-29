@@ -1,0 +1,5 @@
+timestamp,region,pm25,temperature,humidity
+2025-02-27T17:30:00.000Z,US Diplomatic Post: New Delhi-8118,55.0,21.74,37.46
+2025-02-27T20:30:00.000Z,US Diplomatic Post: New Delhi-8118,39.0,27.38,35.23
+2025-02-28T00:30:00.000Z,US Diplomatic Post: New Delhi-8118,-999.0,24.88,40.77
+2025-02-28T04:30:00.000Z,US Diplomatic Post: New Delhi-8118,67.0,21.45,61.04
